@@ -20,5 +20,11 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 30
 
+    # AI Configuration (Step 17)
+    ai_enabled: bool = False
+    ai_provider: str = "mock"
+    gemini_api_key: str | None = None
+    gemini_model: str = "gemini-3.6-flash"
+
 
 settings = Settings()

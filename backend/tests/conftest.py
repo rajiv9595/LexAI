@@ -13,12 +13,24 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 import app.models  # noqa: F401
+from app.core import config as config_module
 from app.core.database import Base, get_db
 from app.core.security import create_access_token, hash_password
 from app.data.seed import seed_database
 from app.main import app
 from app.models.user import User
 from app.repositories import user_repository
+
+
+@pytest.fixture(autouse=True)
+def force_prototype_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Force prototype (non-AI) mode for every test.
+
+    The suite must be hermetic: no test may reach the real Gemini API,
+    regardless of the developer's local backend/.env (which may enable AI).
+    Tests that need AI explicitly opt in by patching settings themselves.
+    """
+    monkeypatch.setattr(config_module.settings, "ai_enabled", False)
 
 
 @pytest.fixture(name="db")
