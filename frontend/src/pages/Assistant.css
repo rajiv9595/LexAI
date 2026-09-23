@@ -75,6 +75,73 @@
   color: var(--color-text-muted);
 }
 
+.message-references {
+  margin-top: var(--space-2);
+  width: 100%;
+  background-color: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-3) var(--space-4);
+}
+
+.message-references-label {
+  margin: 0 0 var(--space-2);
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-muted);
+}
+
+.message-references-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.message-reference {
+  border-top: 1px solid var(--color-border-light);
+  padding-top: var(--space-2);
+  min-width: 0;
+}
+
+.message-reference:first-child {
+  border-top: none;
+  padding-top: 0;
+}
+
+.message-reference-title {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: var(--color-text);
+  overflow-wrap: anywhere;
+}
+
+.message-reference-meta {
+  margin: var(--space-1) 0 0;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  overflow-wrap: anywhere;
+}
+
+.prototype-badge {
+  display: inline-block;
+  margin-top: var(--space-1);
+  padding: 1px var(--space-2);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  line-height: 1.6;
+  color: var(--color-text-secondary);
+  background-color: var(--color-surface-muted);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  white-space: nowrap;
+}
+
 .assistant-assessment-wrap {
   width: 100%;
 }
@@ -132,7 +199,31 @@
   margin-top: var(--space-3);
   display: flex;
   justify-content: flex-end;
+  align-items: center;
+  flex-wrap: wrap;
   gap: var(--space-2);
+}
+
+/* STEP 27: compact composer counter. Muted at rest; restrained existing
+   danger token over the limit (text conveys the state, not color alone). */
+.char-counter {
+  margin-right: auto;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
+
+.char-counter-over {
+  color: var(--color-danger);
+  font-weight: 600;
+}
+
+/* STEP 31/32: generic muted composer hint line (offline notice,
+   shortcut discoverability). Muted text, no banner, no animation. */
+.composer-hint {
+  margin: var(--space-2) 0 0;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
 }
 
 .voice-button {
@@ -174,6 +265,84 @@
 
 .assistant-context-column {
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+/* STEP 25: compact recent-conversations shortcut card. */
+.recent-conversations {
+  background-color: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  padding: var(--space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.recent-conversations-title {
+  margin: 0;
+  font-size: var(--font-size-md);
+  font-weight: 700;
+  color: var(--color-primary);
+}
+
+.recent-conversations-note {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+}
+
+.recent-conversations-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+}
+
+.recent-conversation-item {
+  border-top: 1px solid var(--color-border-light);
+  padding: var(--space-2) 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.recent-conversation-item:first-child {
+  border-top: none;
+  padding-top: 0;
+}
+
+.recent-conversation-link {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  text-decoration: none;
+  border-radius: var(--radius-md);
+}
+
+.recent-conversation-link:hover .recent-conversation-preview {
+  text-decoration: underline;
+}
+
+.recent-conversation-preview {
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: var(--color-text);
+  overflow-wrap: anywhere;
+}
+
+.recent-conversation-meta {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+}
+
+.recent-conversations-more {
+  font-size: var(--font-size-sm);
+  font-weight: 600;
 }
 
 .assistant-disclaimer {
