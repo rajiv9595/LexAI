@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import PageHeader from '../components/PageHeader'
 import DisclaimerBanner from '../components/DisclaimerBanner'
 import ResearchSearch from '../components/ResearchSearch'
@@ -6,15 +6,9 @@ import ResearchFilters from '../components/ResearchFilters'
 import type { SourceTypeFilter } from '../components/ResearchFilters'
 import ResearchResultCard from '../components/ResearchResultCard'
 import ResearchDetail from '../components/ResearchDetail'
-import ResearchSummary from '../components/ResearchSummary'
-import {
-  getResearchSummary,
-  searchResearch,
-} from '../services/researchService'
-import type {
-  ResearchResult,
-  ResearchSort,
-} from '../types/research'
+import { ApiError } from '../services/apiClient'
+import { getResearchRecord, searchResearch } from '../services/researchService'
+import type { ResearchResult, ResearchSort } from '../types/research'
 import './Research.css'
 
 const SUGGESTED_RESEARCH_TOPICS = [
@@ -22,6 +16,37 @@ const SUGGESTED_RESEARCH_TOPICS = [
   'Employment termination',
   'Confidentiality obligations',
 ]
+
+function toSearchErrorMessage(error: unknown): string {
+  if (error instanceof ApiError) {
+    if (error.status === 0) {
+      return 'Unable to connect to the research service. Please verify the backend server is running and try again.'
+    }
+    if (error.status === 400 || error.status === 422) {
+      return 'The search request was invalid. Please adjust your query or filters and try again.'
+    }
+    if (error.status >= 500) {
+      return 'The research service is temporarily unavailable. Please try again later.'
+    }
+    return 'The research search failed. Please try again.'
+  }
+  return 'The research search failed. Please try again.'
+}
+
+function toDetailErrorMessage(error: unknown): string {
+  if (error instanceof ApiError) {
+    if (error.status === 404) {
+      return 'Research record not found.'
+    }
+    if (error.status === 0) {
+      return 'Unable to connect to the research service. Please verify the backend server is running and try again.'
+    }
+    if (error.status >= 500) {
+      return 'The research service is temporarily unavailable. Please try again later.'
+    }
+  }
+  return 'Unable to load the research record. Please try again.'
+}
 
 function Research() {
   const [query, setQuery] = useState('')
@@ -31,43 +56,97 @@ function Research() {
   const [sort, setSort] = useState<ResearchSort>('relevance')
   const [selectedId, setSelectedId] = useState<string | null>(null)
 
+  const [results, setResults] = useState<ResearchResult[]>([])
+  const [isSearching, setIsSearching] = useState(false)
+  const [searchError, setSearchError] = useState<string | null>(null)
+
+  const [selected, setSelected] = useState<ResearchResult | null>(null)
+  const [isDetailLoading, setIsDetailLoading] = useState(false)
+  const [detailError, setDetailError] = useState<string | null>(null)
+
+  const searchRequestId = useRef(0)
+  const detailRequestId = useRef(0)
+
   const hasSearched = submittedQuery !== null
 
-  const results = useMemo<ResearchResult[]>(() => {
+  useEffect(() => {
     if (!hasSearched) {
-      return []
+      return
     }
-    return searchResearch({
+    const requestId = (searchRequestId.current += 1)
+    setIsSearching(true)
+    setSearchError(null)
+    searchResearch({
       query: submittedQuery ?? '',
       sourceTypes: sourceType === 'all' ? [] : [sourceType],
       jurisdiction,
       sort,
     })
+      .then((items) => {
+        if (searchRequestId.current !== requestId) {
+          return
+        }
+        setResults(items)
+        setIsSearching(false)
+      })
+      .catch((error: unknown) => {
+        if (searchRequestId.current !== requestId) {
+          return
+        }
+        setResults([])
+        setSearchError(toSearchErrorMessage(error))
+        setIsSearching(false)
+      })
   }, [hasSearched, submittedQuery, sourceType, jurisdiction, sort])
 
-  const summary = useMemo(() => {
-    if (!hasSearched || (submittedQuery ?? '').trim().length === 0) {
-      return null
-    }
-    return getResearchSummary(submittedQuery ?? '')
-  }, [hasSearched, submittedQuery])
+  function handleSelect(id: string) {
+    setSelectedId(id)
+    const requestId = (detailRequestId.current += 1)
+    setIsDetailLoading(true)
+    setDetailError(null)
+    setSelected(null)
+    getResearchRecord(id)
+      .then((record) => {
+        if (detailRequestId.current !== requestId) {
+          return
+        }
+        setSelected(record)
+        setIsDetailLoading(false)
+      })
+      .catch((error: unknown) => {
+        if (detailRequestId.current !== requestId) {
+          return
+        }
+        setSelected(null)
+        setDetailError(toDetailErrorMessage(error))
+        setIsDetailLoading(false)
+      })
+  }
 
-  const selected = selectedId
-    ? results.find((item) => item.id === selectedId)
-    : undefined
+  function handleCloseDetail() {
+    detailRequestId.current += 1
+    setSelectedId(null)
+    setSelected(null)
+    setDetailError(null)
+    setIsDetailLoading(false)
+  }
 
   function runSearch(value: string) {
+    handleCloseDetail()
     setSubmittedQuery(value)
-    setSelectedId(null)
   }
 
   function handleClearSearch() {
+    searchRequestId.current += 1
+    handleCloseDetail()
     setQuery('')
     setSubmittedQuery(null)
     setSourceType('all')
     setJurisdiction('all')
     setSort('relevance')
-    setSelectedId(null)
+    setResults([])
+    setSearchError(null)
+    setIsSearching(false)
   }
 
   function handleStartingPoint(result: ResearchResult) {
@@ -124,13 +203,37 @@ function Research() {
             ))}
           </ul>
         </div>
+      ) : isSearching ? (
+        <div className="research-loading" role="status">
+          <h2 className="research-loading-title">Searching research records…</h2>
+          <p className="research-loading-text">
+            Querying the research index
+            {submittedQuery && submittedQuery.trim()
+              ? ` for “${submittedQuery.trim()}”`
+              : ''}
+            .
+          </p>
+        </div>
+      ) : searchError ? (
+        <div className="research-error" role="alert">
+          <h2 className="research-error-title">Research search failed</h2>
+          <p className="research-error-text">{searchError}</p>
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={() => runSearch(submittedQuery ?? '')}
+          >
+            Try Again
+          </button>
+        </div>
       ) : results.length === 0 ? (
         <div className="research-no-results">
           <h2 className="research-no-results-title">
-            No prototype references found
+            No research results found
           </h2>
           <p className="research-no-results-text">
-            Try a broader research topic or choose a different source type.
+            No records matched your query. Try a broader research topic or
+            choose a different source type.
           </p>
           <button
             type="button"
@@ -156,26 +259,36 @@ function Research() {
               <ResearchResultCard
                 key={result.id}
                 result={result}
-                selected={result.id === selected?.id}
-                onSelect={setSelectedId}
+                selected={result.id === selectedId}
+                onSelect={handleSelect}
               />
             ))}
           </div>
           <div className="research-side-column">
-            {summary ? (
-              <ResearchSummary
-                summary={summary}
-                onRelatedTopicClick={(topic) => {
-                  setQuery(topic)
-                  runSearch(topic)
-                }}
-              />
+            {isDetailLoading ? (
+              <div className="research-detail-loading" role="status">
+                <p className="research-detail-loading-text">
+                  Loading research record…
+                </p>
+              </div>
             ) : null}
-            {selected ? (
+            {detailError && !isDetailLoading ? (
+              <div className="research-detail-error" role="alert">
+                <p className="research-detail-error-text">{detailError}</p>
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  onClick={handleCloseDetail}
+                >
+                  Close
+                </button>
+              </div>
+            ) : null}
+            {selected && !isDetailLoading && !detailError ? (
               <ResearchDetail
                 result={selected}
                 onUseAsStartingPoint={handleStartingPoint}
-                onClose={() => setSelectedId(null)}
+                onClose={handleCloseDetail}
               />
             ) : null}
           </div>

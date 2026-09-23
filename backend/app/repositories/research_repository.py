@@ -52,3 +52,12 @@ def search(
 def get_result(db: Session, result_id: str) -> ResearchRecord | None:
     """Return a single prototype record, if it exists."""
     return db.get(ResearchRecord, result_id)
+
+
+def list_all(db: Session) -> list[ResearchRecord]:
+    """Return all canonical research records in stable id order.
+
+    Used by the STEP 19 lexical retriever so it reads the exact same
+    canonical records as the public research API. No filtering, no scoring.
+    """
+    return db.query(ResearchRecord).order_by(ResearchRecord.id.asc()).all()
