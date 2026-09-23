@@ -37,7 +37,7 @@ LexAI/
 ## 1. Clone
 
 ```powershell
-git clone YOUR_GITHUB_REPOSITORY_URL
+git clone https://github.com/rajiv9595/LexAI
 cd LexAI
 ```
 
