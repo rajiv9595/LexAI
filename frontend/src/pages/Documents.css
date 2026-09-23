@@ -1,0 +1,140 @@
+.document-template-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--space-4);
+  margin: var(--space-4) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.document-template-card-inner {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  height: 100%;
+}
+
+.document-template-icon {
+  width: 36px;
+  height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background-color: var(--color-primary-light);
+  color: var(--color-primary);
+  border-radius: var(--radius-md);
+}
+
+.document-template-category {
+  margin: 0;
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-muted);
+}
+
+.document-template-card-inner .card-title {
+  margin-top: var(--space-1);
+}
+
+.document-template-action {
+  margin-top: auto;
+  padding-top: var(--space-3);
+}
+
+.documents-footer {
+  margin-top: var(--space-5);
+}
+
+.user-documents-section {
+  margin-bottom: var(--space-5);
+}
+
+.user-document-list {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--space-4);
+  margin: var(--space-4) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.user-document-card-inner {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.user-document-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: center;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+}
+
+.user-document-type {
+  font-weight: 700;
+  background-color: var(--color-bg-subtle, #f1f5f9);
+  padding: 2px 6px;
+  border-radius: var(--radius-sm, 4px);
+  color: var(--color-primary);
+}
+
+.user-document-status {
+  background-color: #e0f2fe;
+  color: #0369a1;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm, 4px);
+}
+
+.user-document-date {
+  color: var(--color-text-muted);
+}
+
+.user-document-action {
+  margin-top: var(--space-2);
+}
+
+.documents-empty-state,
+.documents-loading-card {
+  background: var(--color-surface, #ffffff);
+  border: 1px solid var(--color-border, #e2e8f0);
+  border-radius: var(--radius-md, 8px);
+  padding: var(--space-4);
+  margin-top: var(--space-3);
+}
+
+.documents-empty-title {
+  font-size: var(--font-size-base);
+  font-weight: 600;
+  color: var(--color-text-primary);
+  margin: 0 0 var(--space-1);
+}
+
+.documents-empty-text {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+  margin: 0;
+}
+
+@media (max-width: 767px) {
+  .documents-section-title {
+    margin: var(--space-5) 0 var(--space-1);
+    font-size: var(--font-size-lg);
+    font-weight: 600;
+  }
+
+  .documents-section-subtitle {
+    margin: 0;
+    font-size: var(--font-size-sm);
+    color: var(--color-text-secondary);
+  }
+
+  .document-template-grid,
+  .user-document-list {
+    grid-template-columns: 1fr;
+  }
+}
