@@ -30,10 +30,12 @@ const MESSAGE_MAX_LENGTH = 4000
 
 function Assistant() {
   const [searchParams, setSearchParams] = useSearchParams()
-  const initialConversationId = searchParams.get('conversationId')
+  // STEP 39: the URL is the source of truth for conversation identity.
+  // Read fresh every render so same-page A→B navigation is observed.
+  const urlConversationId = searchParams.get('conversationId')
 
   const [conversationId, setConversationId] = useState<string | null>(
-    initialConversationId,
+    urlConversationId,
   )
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [draft, setDraft] = useState('')
@@ -53,6 +55,10 @@ function Assistant() {
   const [recentError, setRecentError] = useState<string | null>(null)
   // Smallest safe stale-response guard: only the latest request applies.
   const recentRequestRef = useRef(0)
+  // STEP 39: guards for URL-driven conversation loading. The latest
+  // requested id wins; a stale A→B→C response never overwrites C.
+  const conversationRequestRef = useRef(0)
+  const loadedConversationRef = useRef<string | null>(null)
 
   const messagesEndRef = useRef<HTMLLIElement | null>(null)
   const suggestedPrompts = getSuggestedPrompts()
@@ -114,50 +120,74 @@ function Assistant() {
     }
   }, [])
 
-  // If conversationId is supplied in URL, fetch past conversation
+  // STEP 39: synchronize the active conversation from the URL. Identity
+  // flows URL → state → loading; the composer draft is never touched
+  // here (it clears only on successful send). Handles direct loads,
+  // same-page A→B→A navigation, and removal of the id (new thread).
   useEffect(() => {
     let isMounted = true
-    if (initialConversationId) {
-      setIsLoadingHistory(true)
-      setError(null)
-      getConversation(initialConversationId)
-        .then((res) => {
-          if (isMounted) {
-            setConversationId(res.conversation_id)
-            setMessages(
-              res.messages.map((msg) => ({
-                id: msg.message_id,
-                role: msg.role === 'user' ? 'user' : 'assistant',
-                content: msg.content,
-                // STEP 23: persisted generation-time snapshots reload with
-                // the message; pre-STEP-23 and sourceless messages yield [].
-                references: msg.references ?? [],
-              })),
-            )
-          }
-        })
-        .catch((err: unknown) => {
-          if (isMounted) {
-            // Conversation-load failures are not send retries.
-            setError({
-              message:
-                err instanceof Error
-                  ? err.message
-                  : 'Failed to load conversation.',
-              retryable: false,
-            })
-          }
-        })
-        .finally(() => {
-          if (isMounted) {
-            setIsLoadingHistory(false)
-          }
-        })
+    if (!urlConversationId) {
+      // No id in the URL → new-conversation state. Drops the stale
+      // thread view without disturbing the draft or other UI state.
+      loadedConversationRef.current = null
+      setConversationId(null)
+      setMessages([])
+      setIsLoadingHistory(false)
+      return () => {
+        isMounted = false
+      }
     }
+    if (urlConversationId === loadedConversationRef.current) {
+      // Already showing this conversation — no reload.
+      return () => {
+        isMounted = false
+      }
+    }
+    const requestId = conversationRequestRef.current + 1
+    conversationRequestRef.current = requestId
+    // Adopt the URL identity immediately so sends, context, and markers
+    // target the visible conversation even while its messages load.
+    setConversationId(urlConversationId)
+    setIsLoadingHistory(true)
+    setError(null)
+    getConversation(urlConversationId)
+      .then((res) => {
+        if (isMounted && conversationRequestRef.current === requestId) {
+          loadedConversationRef.current = res.conversation_id
+          setConversationId(res.conversation_id)
+          setMessages(
+            res.messages.map((msg) => ({
+              id: msg.message_id,
+              role: msg.role === 'user' ? 'user' : 'assistant',
+              content: msg.content,
+              // STEP 23: persisted generation-time snapshots reload with
+              // the message; pre-STEP-23 and sourceless messages yield [].
+              references: msg.references ?? [],
+            })),
+          )
+        }
+      })
+      .catch((err: unknown) => {
+        if (isMounted && conversationRequestRef.current === requestId) {
+          // Conversation-load failures are not send retries.
+          setError({
+            message:
+              err instanceof Error
+                ? err.message
+                : 'Failed to load conversation.',
+            retryable: false,
+          })
+        }
+      })
+      .finally(() => {
+        if (isMounted && conversationRequestRef.current === requestId) {
+          setIsLoadingHistory(false)
+        }
+      })
     return () => {
       isMounted = false
     }
-  }, [initialConversationId])
+  }, [urlConversationId])
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ block: 'nearest' })
@@ -231,6 +261,9 @@ function Assistant() {
       )
       if (!conversationId && response.conversation_id) {
         setConversationId(response.conversation_id)
+        // STEP 39: the just-created thread is already fully rendered —
+        // mark it loaded so the URL update below does not refetch it.
+        loadedConversationRef.current = response.conversation_id
         setSearchParams({ conversationId: response.conversation_id })
       }
 
