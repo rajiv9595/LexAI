@@ -18,6 +18,7 @@ from app.ai.providers.gemini import (
     GeminiAIProvider,
     GeminiAuthenticationError,
     GeminiConfigurationError,
+    GeminiError,
     GeminiRateLimitError,
     GeminiResponseError,
     GeminiTimeoutError,
@@ -298,3 +299,284 @@ class TestOrchestratorWithGemini:
 
         # Ensure sanitized error does not reveal the secret key
         assert secret_key not in str(exc_info.value)
+
+    def test_503_spike_retried_once_then_succeeds(self):
+        """STEP 43: a transient 503 gets exactly one bounded retry, then succeeds."""
+        mock_client = MagicMock()
+        mock_response = MagicMock()
+        mock_response.text = json.dumps({"answer": "Deposit guidance."})
+        mock_response.usage_metadata = None
+        mock_client.models.generate_content.side_effect = [
+            errors.APIError(503, "UNAVAILABLE: model under high demand."),
+            mock_response,
+        ]
+        provider = GeminiAIProvider(api_key="test-key", client=mock_client)
+        request = AIRequest(system_instruction="Prompt", user_message="Query")
+
+        with patch("app.ai.providers.gemini.time.sleep") as mock_sleep:
+            ai_response = provider.generate(request)
+
+        assert "Deposit guidance." in ai_response.content
+        assert mock_client.models.generate_content.call_count == 2
+        mock_sleep.assert_called_once_with(1.0)
+
+    def test_persistent_503_raises_safe_error_without_retry_storm(self):
+        """STEP 43: a sustained 503 yields one retry only, then a sanitized error."""
+        secret_key = "AIzaSySecretApiKey123456789"
+        mock_client = MagicMock()
+        mock_client.models.generate_content.side_effect = errors.APIError(
+            503, f"UNAVAILABLE: spike ({secret_key})."
+        )
+        provider = GeminiAIProvider(api_key=secret_key, client=mock_client)
+        request = AIRequest(system_instruction="Prompt", user_message="Query")
+
+        with patch("app.ai.providers.gemini.time.sleep"):
+            with pytest.raises(GeminiResponseError) as exc_info:
+                provider.generate(request)
+
+        # Bounded: initial attempt plus exactly one retry — never a loop.
+        assert mock_client.models.generate_content.call_count == 2
+        # Sanitized: no key material in the raised message.
+        assert secret_key not in str(exc_info.value)
+
+
+def _failover_success_payload(answer="Lease deposit guidance."):
+    """Build a mock SDK response satisfying the legal_assistant contract."""
+    mock_response = MagicMock()
+    mock_response.text = json.dumps({"answer": answer})
+    mock_response.usage_metadata = None
+    return mock_response
+
+
+def _failover_provider(mock_client, chain=("gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.7-flash", "gemini-3.8-flash")):
+    """Build a failover provider with an explicit model chain for testing."""
+    primary, *fallbacks = chain
+    return GeminiAIProvider(
+        api_key="test-key",
+        model_name=primary,
+        fallback_models=list(fallbacks),
+        client=mock_client,
+    )
+
+
+def _attempted_models(mock_client):
+    """Return the ordered model names used across generate_content calls."""
+    return [
+        call.kwargs.get("model")
+        for call in mock_client.models.generate_content.call_args_list
+    ]
+
+
+class TestGeminiModelFailover:
+    """Failover across configured Gemini models for transient conditions."""
+
+    def test_primary_success_no_fallback(self):
+        """TEST 1: 3.6 succeeds — exactly one call, no fallback."""
+        mock_client = MagicMock()
+        mock_client.models.generate_content.return_value = _failover_success_payload()
+        provider = _failover_provider(mock_client)
+        request = AIRequest(system_instruction="Prompt", user_message="Query")
+
+        response = provider.generate(request)
+
+        assert "Lease deposit guidance." in response.content
+        assert response.model == "gemini-3.6-flash"
+        assert mock_client.models.generate_content.call_count == 1
+
+    def test_429_fails_over_to_next_model_once(self):
+        """TEST 2: 3.6 -> 429, 3.5 -> success; 3.7 never called."""
+        mock_client = MagicMock()
+        mock_client.models.generate_content.side_effect = [
+            errors.APIError(429, "RESOURCE_EXHAUSTED: quota exceeded."),
+            _failover_success_payload(),
+        ]
+        provider = _failover_provider(mock_client)
+        request = AIRequest(system_instruction="Prompt", user_message="Query")
+
+        response = provider.generate(request)
+
+        assert "Lease deposit guidance." in response.content
+        assert response.model == "gemini-3.5-flash"
+        assert _attempted_models(mock_client) == ["gemini-3.6-flash", "gemini-3.5-flash"]
+
+    def test_503_fails_over_to_next_model(self):
+        """TEST 3: 3.6 -> 503, 3.5 -> success."""
+        mock_client = MagicMock()
+        mock_client.models.generate_content.side_effect = [
+            errors.APIError(503, "UNAVAILABLE: model under high demand."),
+            _failover_success_payload(),
+        ]
+        provider = _failover_provider(mock_client)
+        request = AIRequest(system_instruction="Prompt", user_message="Query")
+
+        response = provider.generate(request)
+
+        assert "Lease deposit guidance." in response.content
+        assert response.model == "gemini-3.5-flash"
+        assert _attempted_models(mock_client) == ["gemini-3.6-flash", "gemini-3.5-flash"]
+
+    def test_two_failures_then_success(self):
+        """TEST 4: 3.6 -> 429, 3.5 -> 429, 3.7 -> success (3 attempts)."""
+        mock_client = MagicMock()
+        mock_client.models.generate_content.side_effect = [
+            errors.APIError(429, "RESOURCE_EXHAUSTED: quota exceeded."),
+            errors.APIError(429, "RESOURCE_EXHAUSTED: quota exceeded."),
+            _failover_success_payload(),
+        ]
+        provider = _failover_provider(mock_client)
+        request = AIRequest(system_instruction="Prompt", user_message="Query")
+
+        response = provider.generate(request)
+
+        assert response.model == "gemini-3.7-flash"
+        assert _attempted_models(mock_client) == [
+            "gemini-3.6-flash",
+            "gemini-3.5-flash",
+            "gemini-3.7-flash",
+        ]
+
+    def test_full_chain_exhaustion_raises_without_loop(self):
+        """TEST 5: all four fail — exactly four attempts, safe terminal error."""
+        mock_client = MagicMock()
+        mock_client.models.generate_content.side_effect = [
+            errors.APIError(429, "RESOURCE_EXHAUSTED: quota exceeded."),
+            errors.APIError(503, "UNAVAILABLE: model under high demand."),
+            errors.APIError(503, "UNAVAILABLE: model under high demand."),
+            errors.APIError(429, "RESOURCE_EXHAUSTED: quota exceeded."),
+        ]
+        provider = _failover_provider(mock_client)
+        request = AIRequest(system_instruction="Prompt", user_message="Query")
+
+        with pytest.raises(GeminiError) as exc_info:
+            provider.generate(request)
+
+        assert _attempted_models(mock_client) == [
+            "gemini-3.6-flash",
+            "gemini-3.5-flash",
+            "gemini-3.7-flash",
+            "gemini-3.8-flash",
+        ]
+        assert mock_client.models.generate_content.call_count == 4
+        assert isinstance(exc_info.value, (GeminiRateLimitError, GeminiResponseError))
+
+    def test_404_model_unavailable_fails_over(self):
+        """TEST 6: 3.6 -> 404 model unavailable, 3.5 -> success (no retry of 3.6)."""
+        mock_client = MagicMock()
+        mock_client.models.generate_content.side_effect = [
+            errors.APIError(404, "NOT_FOUND: model gemini-3.6-flash is not found."),
+            _failover_success_payload(),
+        ]
+        provider = _failover_provider(mock_client)
+        request = AIRequest(system_instruction="Prompt", user_message="Query")
+
+        response = provider.generate(request)
+
+        assert response.model == "gemini-3.5-flash"
+        assert _attempted_models(mock_client) == ["gemini-3.6-flash", "gemini-3.5-flash"]
+
+    def test_authentication_error_does_not_fail_over(self):
+        """TEST 7: auth failure raises safely without trying fallback models."""
+        secret_key = "AIzaSySecretApiKey123456789"
+        mock_client = MagicMock()
+        mock_client.models.generate_content.side_effect = errors.APIError(
+            401, "Unauthorized: invalid API key."
+        )
+        provider = GeminiAIProvider(
+            api_key=secret_key,
+            model_name="gemini-3.6-flash",
+            fallback_models=["gemini-3.5-flash", "gemini-3.7-flash"],
+            client=mock_client,
+        )
+        request = AIRequest(system_instruction="Prompt", user_message="Query")
+
+        with pytest.raises(GeminiAuthenticationError) as exc_info:
+            provider.generate(request)
+
+        assert mock_client.models.generate_content.call_count == 1
+        assert secret_key not in str(exc_info.value)
+
+    def test_two_calls_fail_over_independently(self):
+        """TEST 8: understanding succeeds on 3.6; final answer fails over to 3.5."""
+        mock_client = MagicMock()
+        understanding_payload = MagicMock()
+        understanding_payload.text = json.dumps(
+            {"intent": "general_information", "legal_domain": "contract"}
+        )
+        understanding_payload.usage_metadata = None
+        mock_client.models.generate_content.side_effect = [
+            understanding_payload,
+            errors.APIError(429, "RESOURCE_EXHAUSTED: quota exceeded."),
+            _failover_success_payload(),
+        ]
+        provider = _failover_provider(mock_client)
+
+        understanding_request = AIRequest(
+            system_instruction="Understand",
+            user_message="Review my lease deposit clause.",
+            response_schema_name="query_understanding",
+        )
+        understanding = provider.generate(understanding_request)
+        assert understanding.model == "gemini-3.6-flash"
+
+        answer_request = AIRequest(system_instruction="Answer", user_message="Review my lease deposit clause.")
+        answer = provider.generate(answer_request)
+        assert answer.model == "gemini-3.5-flash"
+
+        assert _attempted_models(mock_client) == [
+            "gemini-3.6-flash",
+            "gemini-3.6-flash",
+            "gemini-3.5-flash",
+        ]
+
+    def test_chain_exhaustion_is_safe_and_bounded(self):
+        """TEST 9: all models fail — safe error, no secret leak, no retry storm."""
+        secret_key = "AIzaSySecretApiKey123456789"
+        mock_client = MagicMock()
+        mock_client.models.generate_content.side_effect = errors.APIError(
+            429, "RESOURCE_EXHAUSTED: quota exceeded."
+        )
+        provider = GeminiAIProvider(
+            api_key=secret_key,
+            model_name="gemini-3.6-flash",
+            fallback_models=["gemini-3.5-flash", "gemini-3.7-flash", "gemini-3.8-flash"],
+            client=mock_client,
+        )
+        request = AIRequest(system_instruction="Prompt", user_message="Query")
+
+        with pytest.raises(GeminiRateLimitError) as exc_info:
+            provider.generate(request)
+
+        assert mock_client.models.generate_content.call_count == 4
+        assert secret_key not in str(exc_info.value)
+
+    def test_2_5_flash_never_in_fallback_chain(self):
+        """gemini-2.5-flash (404 in live test) is always excluded from failover."""
+        mock_client = MagicMock()
+        provider = GeminiAIProvider(
+            api_key="test-key",
+            model_name="gemini-3.6-flash",
+            fallback_models=["gemini-2.5-flash", "gemini-3.5-flash"],
+            client=mock_client,
+        )
+        assert "gemini-2.5-flash" not in provider.model_chain
+        assert provider.model_chain == ["gemini-3.6-flash", "gemini-3.5-flash"]
+
+    def test_factory_wires_configured_fallback_chain(self):
+        """Factory builds the failover provider from GEMINI_MODEL settings."""
+        mock_client = MagicMock()
+        with patch(
+            "app.ai.providers.factory.settings.gemini_model", "gemini-3.6-flash"
+        ), patch(
+            "app.ai.providers.factory.settings.gemini_fallback_models",
+            "gemini-3.5-flash,gemini-3.7-flash,gemini-3.8-flash",
+        ), patch(
+            "app.ai.providers.gemini.genai.Client", return_value=mock_client
+        ):
+            provider = get_ai_provider(provider_name="gemini")
+        assert isinstance(provider, GeminiAIProvider)
+        assert provider.model_chain == [
+            "gemini-3.6-flash",
+            "gemini-3.5-flash",
+            "gemini-3.7-flash",
+            "gemini-3.8-flash",
+        ]

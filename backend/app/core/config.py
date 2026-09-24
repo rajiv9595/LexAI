@@ -25,6 +25,7 @@ class Settings(BaseSettings):
     ai_provider: str = "mock"
     gemini_api_key: str | None = None
     gemini_model: str = "gemini-3.6-flash"
+    gemini_fallback_models: str = "gemini-3.5-flash,gemini-3.7-flash,gemini-3.8-flash"
 
 
 settings = Settings()

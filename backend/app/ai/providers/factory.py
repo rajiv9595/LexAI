@@ -25,6 +25,9 @@ def get_ai_provider(provider_name: str | None = None) -> AIProvider:
     if resolved_name == "mock":
         return MockDeterministicAIProvider()
     elif resolved_name == "gemini":
-        return GeminiAIProvider()
+        return GeminiAIProvider(
+            model_name=settings.gemini_model,
+            fallback_models=settings.gemini_fallback_models,
+        )
     else:
         raise GeminiConfigurationError(f"Unsupported AI provider configured: '{resolved_name}'")
