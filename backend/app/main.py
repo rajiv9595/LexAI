@@ -1,4 +1,4 @@
-"""LexAssist prototype API application entry point."""
+"""LexAssist API application entry point."""
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -8,26 +8,26 @@ from app.core.config import settings
 
 app = FastAPI(
     title="LexAssist API",
-    description="Backend API for the LexAssist legal assistance prototype.",
-    version="0.1.0",
+    description="Backend API for the LexAssist legal assistance platform.",
+    version=settings.app_version,
 )
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[settings.frontend_origin],
     allow_credentials=True,
-    allow_methods=["GET", "POST"],
+    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Content-Type", "Authorization"],
 )
 
 
 @app.get("/")
 def read_root() -> dict[str, str]:
-    """Return basic prototype API information."""
+    """Return basic API metadata."""
     return {
-        "name": "LexAssist API",
-        "version": "0.1.0",
-        "status": "prototype",
+        "name": settings.app_name,
+        "version": settings.app_version,
+        "status": "ok",
     }
 
 
