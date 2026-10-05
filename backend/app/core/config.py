@@ -35,7 +35,7 @@ class Settings(BaseSettings):
         if self.environment.lower() == "production":
             if self.jwt_secret_key == "CHANGE_ME_TO_A_LONG_RANDOM_SECRET":
                 raise ValueError("JWT_SECRET_KEY must be explicitly configured in production.")
-            if self.database_url.endswith("lexassist"):
+            if "CHANGE_ME" in self.database_url:
                 raise ValueError("DATABASE_URL must be explicitly configured in production.")
             if self.ai_provider == "mock" and self.ai_enabled:
                 raise ValueError("AI_PROVIDER=mock cannot be enabled in production.")
