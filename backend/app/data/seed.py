@@ -18,6 +18,7 @@ from app.models.assistant import AssistantConversation, AssistantMessage
 from app.models.documents import Document
 from app.models.history import HistoryItem
 from app.models.research import ResearchRecord
+from app.models.research_evidence import ResearchEvidence
 
 SEED_CONVERSATION_ID = "conversation-demo"
 SEED_DOCUMENT_ID = "rental-agreement-demo"
@@ -107,6 +108,50 @@ def seed_database(db: Session) -> dict[str, int]:
                 )
             )
             counts["research"] += 1
+
+
+    evidence_seed = [
+        (
+            "rental-deposit-dispute",
+            "evidence-rental-deposit-1",
+            "Prototype summary passage",
+            "A demonstration record showing how rental-deposit issues could be organized for legal research.",
+        ),
+        (
+            "employment-termination",
+            "evidence-employment-termination-1",
+            "Prototype summary passage",
+            "A demonstration record showing how employment-ending scenarios could be organized for legal research.",
+        ),
+        (
+            "confidentiality-obligations",
+            "evidence-confidentiality-1",
+            "Prototype summary passage",
+            "A demonstration record showing how confidentiality duties could be organized for legal research.",
+        ),
+        (
+            "property-ownership-dispute",
+            "evidence-property-ownership-1",
+            "Prototype summary passage",
+            "A demonstration record showing how property-ownership questions could be organized for legal research.",
+        ),
+        (
+            "contract-review-basics",
+            "evidence-contract-review-1",
+            "Prototype summary passage",
+            "A demonstration record showing how contract-review topics could be organized for legal research.",
+        ),
+    ]
+    for record_id, evidence_id, locator, text in evidence_seed:
+        if db.get(ResearchEvidence, evidence_id) is None:
+            db.add(
+                ResearchEvidence(
+                    id=evidence_id,
+                    research_record_id=record_id,
+                    locator=locator,
+                    text=text,
+                )
+            )
 
     history_seed = [
         ("history-rental-deposit-session", "assistant", "Rental Deposit Question",
