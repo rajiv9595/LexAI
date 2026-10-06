@@ -44,3 +44,13 @@ def test_read_result_valid(client: TestClient) -> None:
 def test_read_result_invalid_returns_404(client: TestClient) -> None:
     response = client.get("/api/v1/research/unknown-record")
     assert response.status_code == 404
+
+
+def test_read_result_exposes_provenance_metadata(client: TestClient) -> None:
+    response = client.get("/api/v1/research/rental-deposit-dispute")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["authority_level"] == "prototype"
+    assert body["publisher"] is None
+    assert body["source_url"] is None
+    assert body["verified_at"] is None
