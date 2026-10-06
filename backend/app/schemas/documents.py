@@ -1,4 +1,6 @@
-"""Document request/response schemas."""
+"""Document request/response schemas for the user-owned document workspace."""
+
+from datetime import datetime
 
 from enum import Enum
 from typing import Dict
@@ -7,7 +9,7 @@ from pydantic import BaseModel, Field
 
 
 class DocumentType(str, Enum):
-    """Supported prototype document templates."""
+    """Supported document workspace types."""
 
     RENTAL = "rental"
     EMPLOYMENT = "employment"
@@ -16,7 +18,7 @@ class DocumentType(str, Enum):
 
 
 class DocumentTemplateResponse(BaseModel):
-    """Prototype document template description."""
+    """Document template description."""
 
     type: DocumentType
     title: str
@@ -25,19 +27,27 @@ class DocumentTemplateResponse(BaseModel):
 
 
 class DocumentDraftRequest(BaseModel):
-    """Request to create an in-memory prototype draft."""
+    """Request to create a user-owned document draft."""
 
     type: DocumentType
     details: Dict[str, str] = Field(default_factory=dict)
 
 
+class DocumentUpdateRequest(BaseModel):
+    """Partial update for a user-owned document."""
+
+    title: str | None = Field(default=None, min_length=1, max_length=255)
+    details: Dict[str, str] | None = None
+
+
 class DocumentDraftResponse(BaseModel):
-    """Prototype draft payload. Not a legally valid document."""
+    """Persisted user document payload."""
 
     document_id: str
     type: DocumentType
     title: str
-    status: str = "Prototype Draft"
+    status: str = "Draft"
     created_date: str
+    updated_date: str
     details: Dict[str, str] = Field(default_factory=dict)
-    prototype: bool = True
+    prototype: bool = False

@@ -395,3 +395,20 @@ class _PassthroughProvider(AIProvider):
             content="ok", provider=self.provider_name, model="t",
             safety_status=_SS.SAFE,
         )
+
+
+def test_grounded_retrieval_binds_canonical_evidence_passages(db: Session) -> None:
+    grounded = research_service.retrieve_grounded(
+        db,
+        "security deposit dispute",
+        limit=5,
+    )
+
+    assert grounded.source_count >= 1
+    source = grounded.sources[0]
+    assert source.evidence
+    assert source.evidence[0].evidence_id
+    assert source.evidence[0].locator == "Prototype summary passage"
+    assert source.evidence[0].text == source.summary
+    assert "Evidence passages:" in grounded.context_text
+    assert source.prototype is True

@@ -7,11 +7,14 @@ from app.ai.models.query_understanding import LegalQueryUnderstanding
 from app.ai.models.retrieval import GroundedContext
 from app.ai.services import research_retriever
 from app.models.research import ResearchRecord
+from app.models.research_evidence import ResearchEvidence
+from app.ai.models.retrieval import RetrievedEvidencePassage
 from app.repositories import research_repository
 from app.schemas.research import (
     ResearchResultResponse,
     ResearchSearchRequest,
     ResearchSearchResponse,
+    ResearchEvidenceResponse,
 )
 
 
@@ -26,7 +29,25 @@ def search_prototype(
         jurisdiction=payload.jurisdiction,
         sort=payload.sort.value,
     )
-    results = [_to_response(record) for record in records]
+    evidence_rows = (
+        db.query(ResearchEvidence)
+        .filter(ResearchEvidence.research_record_id.in_([record.id for record in records]))
+        .order_by(ResearchEvidence.research_record_id.asc(), ResearchEvidence.id.asc())
+        .all()
+    )
+    evidence_by_source: dict[str, list[ResearchEvidenceResponse]] = {}
+    for row in evidence_rows:
+        evidence_by_source.setdefault(row.research_record_id, []).append(
+            ResearchEvidenceResponse(
+                evidence_id=row.id,
+                locator=row.locator,
+                text=row.text,
+            )
+        )
+    results = [
+        _to_response(record, evidence_by_source.get(record.id, []))
+        for record in records
+    ]
     return ResearchSearchResponse(
         query=payload.query,
         count=len(results),
@@ -43,10 +64,29 @@ def get_result(db: Session, result_id: str) -> ResearchResultResponse:
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Research record not found.",
         )
-    return _to_response(record)
+    evidence = (
+        db.query(ResearchEvidence)
+        .filter(ResearchEvidence.research_record_id == record.id)
+        .order_by(ResearchEvidence.id.asc())
+        .all()
+    )
+    return _to_response(
+        record,
+        [
+            ResearchEvidenceResponse(
+                evidence_id=row.id,
+                locator=row.locator,
+                text=row.text,
+            )
+            for row in evidence
+        ],
+    )
 
 
-def _to_response(record: ResearchRecord) -> ResearchResultResponse:
+def _to_response(
+    record: ResearchRecord,
+    evidence: list[ResearchEvidenceResponse] | None = None,
+) -> ResearchResultResponse:
     return ResearchResultResponse(
         result_id=record.id,
         title=record.title,
@@ -56,7 +96,12 @@ def _to_response(record: ResearchRecord) -> ResearchResultResponse:
         citation_label=record.citation_label,
         summary=record.summary,
         topics=[str(topic) for topic in list(record.topics or [])],
-        prototype=True,
+        source_url=record.source_url,
+        publisher=record.publisher,
+        authority_level=record.authority_level,
+        verified_at=record.verified_at.isoformat() if record.verified_at else None,
+        evidence=evidence or [],
+        prototype=bool(record.prototype),
     )
 
 
@@ -74,6 +119,38 @@ def retrieve_grounded(
     yields ``sources=[]`` / ``source_count=0`` / ``context_text=""``.
     """
     records = research_repository.list_all(db)
-    return research_retriever.retrieve(
+    grounded = research_retriever.retrieve(
         records, query=query, understanding=understanding, limit=limit
+    )
+    if not grounded.sources:
+        return grounded
+
+    source_ids = [source.source_id for source in grounded.sources]
+    evidence_rows = (
+        db.query(ResearchEvidence)
+        .filter(ResearchEvidence.research_record_id.in_(source_ids))
+        .order_by(ResearchEvidence.research_record_id.asc(), ResearchEvidence.id.asc())
+        .all()
+    )
+    by_source: dict[str, list[RetrievedEvidencePassage]] = {}
+    for row in evidence_rows:
+        by_source.setdefault(row.research_record_id, []).append(
+            RetrievedEvidencePassage(
+                evidence_id=row.id,
+                locator=row.locator,
+                text=row.text,
+            )
+        )
+
+    enriched_sources = [
+        source.model_copy(update={"evidence": by_source.get(source.source_id, [])})
+        for source in grounded.sources
+    ]
+    enriched_context = research_retriever.format_grounded_context(enriched_sources)
+    return grounded.model_copy(
+        update={
+            "sources": enriched_sources,
+            "context_text": enriched_context,
+            "source_count": len(enriched_sources),
+        }
     )

@@ -11,6 +11,7 @@ from app.models.assistant import (
 from app.models.documents import Document
 from app.models.history import HistoryItem
 from app.models.research import ResearchRecord
+from app.models.research_evidence import ResearchEvidence
 from app.models.user import User
 
 __all__ = [
@@ -20,5 +21,6 @@ __all__ = [
     "Document",
     "HistoryItem",
     "ResearchRecord",
+    "ResearchEvidence",
     "User",
 ]

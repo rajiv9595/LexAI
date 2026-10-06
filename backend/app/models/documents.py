@@ -1,4 +1,4 @@
-"""Document draft ORM model."""
+"""User-owned document workspace ORM model."""
 
 from datetime import datetime
 
@@ -12,7 +12,7 @@ DOCUMENT_STATUSES = ("Prototype Draft", "Draft", "Completed")
 
 
 class Document(Base):
-    """Prototype document draft. Not a legally valid document."""
+    """Persisted legal workspace document."""
 
     __tablename__ = "documents"
     __table_args__ = (
@@ -25,9 +25,9 @@ class Document(Base):
     id: Mapped[str] = mapped_column(String(160), primary_key=True)
     type: Mapped[str] = mapped_column(String(32), nullable=False)
     title: Mapped[str] = mapped_column(String(255), nullable=False)
-    status: Mapped[str] = mapped_column(String(32), nullable=False, default="Prototype Draft")
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="Draft")
     details: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
-    prototype: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    prototype: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     user_id: Mapped[str | None] = mapped_column(
         String(64),
         ForeignKey("users.id", ondelete="SET NULL"),
@@ -38,5 +38,8 @@ class Document(Base):
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now()
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
     )
