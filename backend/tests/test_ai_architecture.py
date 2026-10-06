@@ -1,5 +1,7 @@
 """Unit tests for the provider-independent AI architecture, prompts, safety guardrails, and orchestrator."""
 
+import json
+
 import pytest
 from pydantic import ValidationError
 
