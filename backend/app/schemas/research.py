@@ -43,6 +43,10 @@ class ResearchResultResponse(BaseModel):
     citation_label: str
     summary: str
     topics: List[str] = Field(default_factory=list)
+    source_url: Optional[str] = None
+    publisher: Optional[str] = None
+    authority_level: str = "prototype"
+    verified_at: Optional[str] = None
     prototype: bool = True
 
 
