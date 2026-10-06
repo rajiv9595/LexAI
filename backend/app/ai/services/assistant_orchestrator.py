@@ -22,6 +22,7 @@ from app.ai.prompts.legal_assistant import (
 )
 from app.ai.providers.base import AIProvider
 from app.ai.providers.factory import get_ai_provider
+from app.ai.providers.gemini import GeminiResponseError
 from app.ai.safety.guardrails import (
     CENTRAL_LEGAL_DISCLAIMER,
     assess_request,
@@ -87,11 +88,20 @@ class AssistantOrchestrator:
 
     def process_request(self, request: AIRequest) -> LegalAssistantResponse:
         """Process an AIRequest container through the orchestrator pipeline."""
+        if request.response_schema_name != "legal_assistant":
+            raise GeminiResponseError(
+                "AssistantOrchestrator only accepts the legal_assistant response schema."
+            )
+
         return self.process_query(
             user_message=request.user_message,
             conversation_history=request.conversation_history,
             case_context=request.case_context,
             retrieved_context=request.retrieved_context,
+            system_instruction=request.system_instruction or LEGAL_ASSISTANT_SYSTEM_PROMPT,
+            temperature=request.temperature,
+            max_tokens=request.max_tokens,
+            response_schema_name=request.response_schema_name,
         )
 
     def process_query(
@@ -101,6 +111,11 @@ class AssistantOrchestrator:
         case_context: dict[str, str] | None = None,
         retrieved_context: list[str] | None = None,
         retrieval_resolver: RetrievalResolver | None = None,
+        *,
+        system_instruction: str | None = None,
+        temperature: float = 0.2,
+        max_tokens: int = 4096,
+        response_schema_name: str = "legal_assistant",
     ) -> LegalAssistantResponse:
         """Process a legal query through the complete orchestration and safety pipeline.
 
@@ -112,6 +127,12 @@ class AssistantOrchestrator:
         before any retrieval call.
         """
         normalized_message = user_message.strip()
+        if not normalized_message:
+            raise GeminiResponseError("Assistant message cannot be empty.")
+        if response_schema_name != "legal_assistant":
+            raise GeminiResponseError(
+                "AssistantOrchestrator requires response_schema_name='legal_assistant'."
+            )
 
         # Step 1: Pre-generation Safety Assessment
         safety = assess_request(normalized_message)
@@ -128,7 +149,7 @@ class AssistantOrchestrator:
                     "Emergency safety concerns take absolute priority over general legal information.",
                 ],
                 suggested_next_steps=[
-                    "Contact emergency services (911 or local emergency) if in immediate physical danger.",
+                    "Contact emergency services or the appropriate local emergency service if in immediate physical danger.",
                     "Retain qualified criminal defense or litigation counsel immediately.",
                 ],
                 references=[],
@@ -168,18 +189,21 @@ class AssistantOrchestrator:
 
         # Step 4: Build AI Request (final answer generation)
         ai_request = AIRequest(
-            system_instruction=LEGAL_ASSISTANT_SYSTEM_PROMPT,
+            system_instruction=system_instruction or LEGAL_ASSISTANT_SYSTEM_PROMPT,
             user_message=normalized_message,
             conversation_history=conversation_history or [],
             retrieved_context=effective_retrieved,
             case_context=case_context or {},
+            temperature=temperature,
+            max_tokens=max_tokens,
+            response_schema_name=response_schema_name,
             query_understanding=_format_understanding(understanding),
         )
 
         # Step 5: Dispatch to Provider Interface
         raw_response = self.provider.generate(ai_request)
 
-        # Step 6: Parse Structured Output
+        # Step 6: Parse and enforce the final structured response contract.
         answer_text = raw_response.content
         issue_summary = f"Inquiry regarding: {normalized_message[:80]}..."
         assumptions: list[str] = []
@@ -196,41 +220,49 @@ class AssistantOrchestrator:
         ]
         references: list[LegalReferenceItem] = []
 
-        # Attempt JSON decoding if provider returned structured JSON
         try:
             parsed = json.loads(raw_response.content)
-            if isinstance(parsed, dict):
-                answer_text = str(parsed.get("answer") or parsed.get("content") or raw_response.content)
-                if parsed.get("issue_summary"):
-                    issue_summary = str(parsed["issue_summary"])
-                if isinstance(parsed.get("assumptions"), list):
-                    assumptions = [str(x) for x in parsed["assumptions"]]
-                if isinstance(parsed.get("missing_information"), list) and parsed["missing_information"]:
-                    missing_information = [str(x) for x in parsed["missing_information"]]
-                if isinstance(parsed.get("potential_considerations"), list) and parsed["potential_considerations"]:
-                    potential_considerations = [str(x) for x in parsed["potential_considerations"]]
-                if isinstance(parsed.get("suggested_next_steps"), list) and parsed["suggested_next_steps"]:
-                    suggested_next_steps = [str(x) for x in parsed["suggested_next_steps"]]
+        except json.JSONDecodeError as exc:
+            if self.provider.provider_name == "deterministic-mock":
+                parsed = None
+            else:
+                raise GeminiResponseError(
+                    "Assistant provider returned invalid structured JSON."
+                ) from exc
 
-                # Strict grounding rule: only permit references if retrieved_context was non-empty
-                if effective_retrieved and isinstance(parsed.get("references"), list):
-                    for ref in parsed["references"]:
-                        if isinstance(ref, dict):
-                            references.append(
-                                LegalReferenceItem(
-                                    title=str(ref.get("title", "")),
-                                    kind=str(ref.get("kind", "Reference")),
-                                    citation=str(ref.get("citation", "")),
-                                    relevance_note=str(ref.get("relevance_note", "")),
-                                    source_id=str(ref.get("source_id", "") or ""),
-                                )
-                            )
-                else:
-                    references = []
-        except (json.JSONDecodeError, ValueError):
-            # Non-JSON content (e.g., deterministic mock string) is handled as plain text answer
-            pass
+        if parsed is None:
+            # Backwards-compatible offline deterministic mock behavior only.
+            answer_text = raw_response.content
+        elif not isinstance(parsed, dict):
+            raise GeminiResponseError(
+                "Assistant provider returned a structured value that is not a JSON object."
+            )
+        else:
+            payload = dict(parsed)
+            payload["disclaimer"] = CENTRAL_LEGAL_DISCLAIMER
+            payload["safety_assessment"] = safety
+            payload["prompt_version"] = LEGAL_ASSISTANT_PROMPT_VERSION
+            payload["provider_used"] = self.provider.provider_name
 
+            try:
+                validated = LegalAssistantResponse.model_validate(payload)
+            except Exception as exc:
+                raise GeminiResponseError(
+                    "Assistant provider returned JSON that failed the legal response contract."
+                ) from exc
+
+            answer_text = validated.answer
+            issue_summary = validated.issue_summary or issue_summary
+            assumptions = list(validated.assumptions)
+            if validated.missing_information:
+                missing_information = list(validated.missing_information)
+            if validated.potential_considerations:
+                potential_considerations = list(validated.potential_considerations)
+            if validated.suggested_next_steps:
+                suggested_next_steps = list(validated.suggested_next_steps)
+
+            if effective_retrieved:
+                references = list(validated.references)
         # Step 6b (STEP 20): Deterministic Citation Validation.
         # Model-supplied references are bound against the GroundedContext
         # allowlist and rebuilt from backend metadata; unknown, fabricated,
@@ -262,9 +294,32 @@ class AssistantOrchestrator:
         # Step 7: Post-generation Response Validation
         is_valid, violations = validate_response(answer_text, safety)
         if not is_valid:
-            answer_text = (
-                f"{answer_text}\n\n"
-                "[Notice: This response provides general legal information and does not constitute guaranteed legal outcomes or formal representation.]"
+            logger.error(
+                "Generated response rejected by post-generation safety validation: %s",
+                "; ".join(violations),
+            )
+            return LegalAssistantResponse(
+                answer=(
+                    "I could not safely return the generated response because it "
+                    "did not meet LexAssist's safety requirements. Please consult "
+                    "a qualified legal professional for guidance on your matter."
+                ),
+                issue_summary="Generated response withheld by safety validation.",
+                assumptions=[],
+                missing_information=[
+                    "The generated response could not be safely returned."
+                ],
+                potential_considerations=[
+                    "A qualified legal professional can review the underlying facts and jurisdiction-specific requirements."
+                ],
+                suggested_next_steps=[
+                    "Review the relevant documents and facts with qualified counsel."
+                ],
+                references=[],
+                disclaimer=CENTRAL_LEGAL_DISCLAIMER,
+                safety_assessment=safety,
+                prompt_version=LEGAL_ASSISTANT_PROMPT_VERSION,
+                provider_used=self.provider.provider_name,
             )
 
         # Step 8: Assemble Domain-Level LegalAssistantResponse
