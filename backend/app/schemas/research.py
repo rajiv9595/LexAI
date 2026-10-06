@@ -32,6 +32,14 @@ class ResearchSearchRequest(BaseModel):
     sort: ResearchSort = ResearchSort.RELEVANCE
 
 
+class ResearchEvidenceResponse(BaseModel):
+    """Evidence passage linked to a research record."""
+
+    evidence_id: str
+    locator: str
+    text: str
+
+
 class ResearchResultResponse(BaseModel):
     """Single prototype research record. Not an authoritative source."""
 
@@ -47,6 +55,8 @@ class ResearchResultResponse(BaseModel):
     publisher: Optional[str] = None
     authority_level: str = "prototype"
     verified_at: Optional[str] = None
+    verified_at: Optional[str] = None
+    evidence: List[ResearchEvidenceResponse] = Field(default_factory=list)
     prototype: bool = True
 
 
