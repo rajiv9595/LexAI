@@ -263,7 +263,7 @@ def format_grounded_context(sources: Sequence[RetrievedLegalSource]) -> str:
                 source.date,
                 source.citation_label,
                 prototype_flag,
-                source.summary,
+                source.summary + ("\nEvidence passages:\n" + "\n".join(["[" + item.locator + "] " + item.text for item in source.evidence]) if source.evidence else ""),
             )
         )
     return "\n\n".join(blocks)
