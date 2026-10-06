@@ -58,7 +58,11 @@ def _to_response(record: ResearchRecord) -> ResearchResultResponse:
         citation_label=record.citation_label,
         summary=record.summary,
         topics=[str(topic) for topic in list(record.topics or [])],
-        prototype=True,
+        source_url=record.source_url,
+        publisher=record.publisher,
+        authority_level=record.authority_level,
+        verified_at=record.verified_at.isoformat() if record.verified_at else None,
+        prototype=bool(record.prototype),
     )
 
 
