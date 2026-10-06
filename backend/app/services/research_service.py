@@ -7,6 +7,8 @@ from app.ai.models.query_understanding import LegalQueryUnderstanding
 from app.ai.models.retrieval import GroundedContext
 from app.ai.services import research_retriever
 from app.models.research import ResearchRecord
+from app.models.research_evidence import ResearchEvidence
+from app.ai.models.retrieval import RetrievedEvidencePassage
 from app.repositories import research_repository
 from app.schemas.research import (
     ResearchResultResponse,
@@ -74,6 +76,38 @@ def retrieve_grounded(
     yields ``sources=[]`` / ``source_count=0`` / ``context_text=""``.
     """
     records = research_repository.list_all(db)
-    return research_retriever.retrieve(
+    grounded = research_retriever.retrieve(
         records, query=query, understanding=understanding, limit=limit
+    )
+    if not grounded.sources:
+        return grounded
+
+    source_ids = [source.source_id for source in grounded.sources]
+    evidence_rows = (
+        db.query(ResearchEvidence)
+        .filter(ResearchEvidence.research_record_id.in_(source_ids))
+        .order_by(ResearchEvidence.research_record_id.asc(), ResearchEvidence.id.asc())
+        .all()
+    )
+    by_source: dict[str, list[RetrievedEvidencePassage]] = {}
+    for row in evidence_rows:
+        by_source.setdefault(row.research_record_id, []).append(
+            RetrievedEvidencePassage(
+                evidence_id=row.id,
+                locator=row.locator,
+                text=row.text,
+            )
+        )
+
+    enriched_sources = [
+        source.model_copy(update={"evidence": by_source.get(source.source_id, [])})
+        for source in grounded.sources
+    ]
+    enriched_context = research_retriever.format_grounded_context(enriched_sources)
+    return grounded.model_copy(
+        update={
+            "sources": enriched_sources,
+            "context_text": enriched_context,
+            "source_count": len(enriched_sources),
+        }
     )
