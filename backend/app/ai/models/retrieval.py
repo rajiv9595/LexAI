@@ -43,6 +43,16 @@ class RetrievedSourceProvenance(BaseModel):
     )
 
 
+
+
+class RetrievedEvidencePassage(BaseModel):
+    """Generation-time evidence passage copied from a canonical research source."""
+
+    evidence_id: str = Field(..., description="Stable evidence passage identifier")
+    locator: str = Field(default="", description="Human-readable passage locator")
+    text: str = Field(..., description="Verbatim evidence text from the canonical source")
+
+
 class RetrievedLegalSource(BaseModel):
     """A single retrieved legal-evidence item copied from a research record."""
 
@@ -70,6 +80,10 @@ class RetrievedLegalSource(BaseModel):
     prototype: bool = Field(
         default=True,
         description="Preserved prototype flag from the canonical record",
+    )
+    evidence: list[RetrievedEvidencePassage] = Field(
+        default_factory=list,
+        description="Evidence passages linked to this canonical source",
     )
 
 
