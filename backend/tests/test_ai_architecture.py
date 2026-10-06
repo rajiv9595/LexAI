@@ -18,6 +18,7 @@ from app.ai.prompts.legal_assistant import (
     LEGAL_ASSISTANT_SYSTEM_PROMPT,
 )
 from app.ai.providers.base import AIProvider, MockDeterministicAIProvider
+from app.ai.providers.gemini import GeminiResponseError
 from app.ai.safety.guardrails import (
     CENTRAL_LEGAL_DISCLAIMER,
     assess_request,
@@ -268,3 +269,109 @@ class TestAssistantOrchestrator:
 
         assert "I guarantee you will win." in result.answer
         assert "[Notice: This response provides general legal information" in result.answer
+
+
+class _ContractTestProvider(AIProvider):
+    """Small provider fixture for exercising orchestration invariants."""
+
+    def __init__(self, final_content: str):
+        self.final_content = final_content
+        self.calls: list[AIRequest] = []
+
+    @property
+    def provider_name(self) -> str:
+        return "contract-test-provider"
+
+    def generate(self, request: AIRequest) -> AIResponse:
+        self.calls.append(request)
+        if request.response_schema_name == "query_understanding":
+            return AIResponse(
+                content=json.dumps(
+                    {
+                        "intent": "general_information",
+                        "legal_domain": "contract",
+                        "primary_issue": None,
+                        "secondary_issues": [],
+                        "jurisdiction": None,
+                        "parties": [],
+                        "facts": [],
+                        "dates": [],
+                        "amounts": [],
+                        "missing_information": ["jurisdiction"],
+                        "clarification_questions": [],
+                        "urgency": "normal",
+                        "confidence": 0.8,
+                    }
+                ),
+                provider=self.provider_name,
+                model="contract-test-v1",
+            )
+        return AIResponse(
+            content=self.final_content,
+            provider=self.provider_name,
+            model="contract-test-v1",
+        )
+
+
+def test_orchestrator_process_request_preserves_generation_controls():
+    provider = _ContractTestProvider(
+        final_content=json.dumps(
+            {
+                "answer": "The agreement should be reviewed against the applicable law.",
+                "issue_summary": "Contract information request",
+                "assumptions": [],
+                "missing_information": ["jurisdiction"],
+                "potential_considerations": ["Applicable law may vary by jurisdiction."],
+                "suggested_next_steps": ["Review the agreement with qualified counsel."],
+                "references": [],
+            }
+        )
+    )
+    orchestrator = AssistantOrchestrator(provider=provider)
+    request = AIRequest(
+        system_instruction="CUSTOM SYSTEM INSTRUCTION",
+        user_message="Explain this agreement.",
+        temperature=0.65,
+        max_tokens=1234,
+        response_schema_name="legal_assistant",
+    )
+
+    result = orchestrator.process_request(request)
+
+    assert result.answer.startswith("The agreement should be reviewed")
+    final_call = provider.calls[-1]
+    assert final_call.system_instruction == "CUSTOM SYSTEM INSTRUCTION"
+    assert final_call.temperature == 0.65
+    assert final_call.max_tokens == 1234
+    assert final_call.response_schema_name == "legal_assistant"
+
+
+def test_orchestrator_rejects_malformed_real_provider_output():
+    provider = _ContractTestProvider(final_content="NOT JSON")
+    orchestrator = AssistantOrchestrator(provider=provider)
+
+    with pytest.raises(GeminiResponseError, match="invalid structured JSON"):
+        orchestrator.process_query("Explain my contract.")
+
+
+def test_orchestrator_fails_closed_on_prohibited_generated_claim():
+    provider = _ContractTestProvider(
+        final_content=json.dumps(
+            {
+                "answer": "I guarantee you will win this case.",
+                "issue_summary": "Dispute question",
+                "assumptions": [],
+                "missing_information": [],
+                "potential_considerations": [],
+                "suggested_next_steps": [],
+                "references": [],
+            }
+        )
+    )
+    orchestrator = AssistantOrchestrator(provider=provider)
+
+    result = orchestrator.process_query("Will I win?")
+
+    assert "I guarantee you will win this case." not in result.answer
+    assert "could not safely return" in result.answer
+    assert result.references == []
